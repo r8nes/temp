@@ -1,181 +1,80 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using cowsins;
 using UnityEngine;
-using UnityEngine.Events;
 
-public class EXPUIController : MonoBehaviour
+namespace cowsins
 {
-    public List<ChooseUI> UI;
-    public List<UpgradeData> SOList;
-    private List<TempData> temps = new List<TempData>();
-
-    public cowsins.PlayerMovement Movement;
-    public WeaponController Weapon;
-
-    public static bool isPaused { get; private set; }
-    public static EXPUIController Instance { get; private set; }
-    
-    public PlayerStats stats;
-
-    [SerializeField] private float fadeSpeed;
-    [SerializeField] private bool disablePlayerUIWhilePaused;
-    [SerializeField] private CanvasGroup menu;
-    [SerializeField] private GameObject playerUI;
-
-
-    private void Awake()
+    public class ExperienceManager : MonoBehaviour
     {
-        if (Instance != null && Instance != this) Destroy(this);
-        else Instance = this;
+        // Singleton pattern to ensure that there is only one ExperienceManager instance in the game.
+        public static ExperienceManager instance;
+        public bool useExperience;
+        public int playerLevel;
+        public float[] experienceRequirements;
 
-        isPaused = false;
-        menu.gameObject.SetActive(false);
-        menu.alpha = 0;
+        private float totalExperience;
 
-        for (int i = 0; i < SOList.Count; i++)
+        public Action OnLevelUp; 
+
+        private void OnEnable()
         {
-            TempData data = new TempData();
-            data.SetType(SOList[i].Type);
-
-            temps.Add(data);
+            // If there is no existing ExperienceManager instance, then set this instance as the singleton.
+            if (instance == null) instance = this;
         }
-        Debug.Log(JsonUtility.ToJson(temps));
-    }
 
-    private void Start() => ExperienceManager.instance.OnLevelUp += TogglePause;
-
-    private void Update()
-    {
-        if (isPaused)
+        // add experience to the player.
+        public void AddExperience(float amount)
         {
-            stats.LoseControl();
-            if (!menu.gameObject.activeSelf)
+            // Increase the player's total experience.
+            totalExperience += amount;
+
+            // Check if the player has leveled up.
+            CheckForLevelUp();
+        }
+
+        // remove experience from the player.
+        public void RemoveExperience(float amount)
+        {
+            // Reduce the player's total experience.
+            totalExperience = Mathf.Max(totalExperience - amount, 0);
+
+            // Check if the player has leveled down.
+            CheckForLevelDown();
+        }
+
+        // check if the player has leveled up.
+        private void CheckForLevelUp()
+        {
+            // While the player's level is less than the maximum level and their total experience is greater than the experience required for the next level, increase the player's level.
+            while (playerLevel < experienceRequirements.Length - 1 && totalExperience >= experienceRequirements[playerLevel])
             {
-                menu.gameObject.SetActive(true);
-                menu.alpha = 0;
+                playerLevel++;
+                OnLevelUp?.Invoke();
             }
-            if (menu.alpha < 1) menu.alpha += Time.deltaTime * fadeSpeed;
-
-            if (disablePlayerUIWhilePaused && !stats.isDead) playerUI.SetActive(false);
         }
-        else
+
+        // check if the player has leveled down.
+        private void CheckForLevelDown()
         {
-            menu.alpha -= Time.deltaTime * fadeSpeed;
-            if (menu.alpha <= 0) menu.gameObject.SetActive(false);
+            // While the player's level is greater than the minimum level and their total experience is less than the experience required for the current level, decrease the player's level.
+            while (playerLevel > 0 && totalExperience < experienceRequirements[playerLevel])
+            {
+                playerLevel--;
+            }
         }
-    }
 
-    public void TogglePause()
-    {
-        isPaused = !isPaused;
-        if (isPaused)
+        // get the player's level.
+        public int GetPlayerLevel()
         {
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
-
-            if (disablePlayerUIWhilePaused && !stats.isDead) playerUI.SetActive(false);
-            SetChooseCard();
-
-            Time.timeScale = 0.1f;
+            return playerLevel + 1;
         }
-        else
+
+        // get the player's current experience.
+        public float GetCurrentExperience()
         {
-            UnPause();
-        }
-    }
-
-    public void UnPause()
-    {
-        isPaused = false;
-        stats.CheckIfCanGrantControl();
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
-        Time.timeScale = 1f;
-
-        playerUI.SetActive(true);
-    }
-
-    public void SetChooseCard() 
-    {
-        for (int i = 0; i < UI.Count; i++)
-        {
-            var so = GetRandomUpgrade();
-            UI[i].Construct(so);
-        }
-    }
-
-    public UpgradeData GetRandomUpgrade()
-    {
-        var availableSO = SOList.Where(so => GetUsageCount(so) < so.MaxUsageCount).ToList();
-
-        if (availableSO.Count == 0)
-            return null;
-        
-        var randomSO = availableSO.OrderBy(so => Guid.NewGuid()).First();
-
-        return randomSO;
-    }
-
-    public void HandleUpgradeData(UpgradeData data)
-    {
-        var currentTemp = temps.Find(t => t.Type == data.Type);
-        currentTemp.Counter++;
-
-        switch (data.Type)
-        {
-            case UpgradeType.Speed:
-
-                var current = Movement.walkSpeed;
-                float newValue = current * (1f + data.Modificator / 100f);
-                Movement.walkSpeed = newValue;
-
-                var currentRun = Movement.runSpeed;
-                float newValueRun = currentRun * (1f + data.Modificator / 100f);
-                Movement.runSpeed = newValueRun;
-
-                break;
-            case UpgradeType.Attack:
-                break;
-            case UpgradeType.Jump:
-                Movement.maxJumps++;
-                break;
-            case UpgradeType.Dash:
-                Movement.amountOfDashes++;
-                break;
-            case UpgradeType.Weapon_Speed:
-                var currentFR = Weapon.inventory[0].weapon.fireRate;
-                float newFR = currentFR * (1f + data.Modificator / 100f);
-                Weapon.inventory[0].weapon.fireRate = newFR;
-                break;
-            case UpgradeType.Weapon_Attack:
-
-                var currentAttack = Weapon.inventory[0].weapon.damagePerBullet;
-                float newAttack = currentAttack * (1f + data.Modificator / 100f);
-                Weapon.inventory[0].weapon.damagePerBullet = newAttack;
-                Weapon.damagePerBullet = newAttack;
-
-                break;
+            // Calculate the player's current experience by subtracting the experience required for the previous level from their total experience.
+            float previousLevelExperience = playerLevel > 0 ? experienceRequirements[playerLevel - 1] : 0;
+            return totalExperience - previousLevelExperience;
         }
 
-        TogglePause();
     }
-
-
-    private int GetUsageCount(UpgradeData so)
-    {
-        var currentTemp = temps.Find(t => t.Type == so.Type);
-        return currentTemp.Counter;
-    }
-}
-
-public enum UpgradeType 
-{
-    Speed = 0,
-    Attack = 1,
-    Jump = 2,
-    Dash = 3,
-    Weapon_Speed = 4,
-    Weapon_Attack = 5
 }
